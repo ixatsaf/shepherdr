@@ -17,6 +17,8 @@ export default function (omp: any) {
   /** Which call this prompt is for: an answer must never reach a tool its card didn't show, so any doubt is a no. */
   const askedBy = (prompt: string) => {
     if (asks.length < 2) return asks[0]
+    // omp cuts long words short: with part of a call unseen, a shorter call in what is left would look like the one.
+    if (prompt.includes('ch elided')) return undefined
     // The call whose own words the prompt shows most of: `ls -la` is also `ls`. Identical calls are the same to allow.
     const shown = (call: Call) => Math.max(0, ...Object.values(call.input ?? {}).map(value => typeof value === 'string' && prompt.includes(value) ? value.length : 0))
     const same = asks.filter(call => prompt.includes(`Allow tool: ${call.tool}`))
@@ -62,12 +64,14 @@ export default function (omp: any) {
   omp.on('tool_call', async (event: any, ctx: any) => {
     // Its own question box is only on a screen the human doesn't read.
     if (event.toolName === 'ask') return { block: true, reason: 'Your human reads a chat, not this terminal: ask with your shepherdr ask command, then end your turn.' }
+    if (!ctx.hasUI) return
     // Some providers number a call's id per turn: a card must not take an earlier call's end for its own.
     const call = { id: event.toolCallId, tool: event.toolName, name: toolName(event.toolName), use: `${event.toolCallId}#${++count}`, input: event.input }
     calls.set(event.toolCallId, call)
     await hook('PreToolUse', ctx, { tool_name: call.name, tool_use_id: call.use, tool_input: call.input })
   })
   omp.on('tool_result', async (event: any, ctx: any) => {
+    if (!ctx.hasUI) return
     const call = calls.get(event.toolCallId)
     calls.delete(event.toolCallId)
     if (call) await hook(event.isError ? 'PostToolUseFailure' : 'PostToolUse', ctx, { tool_name: call.name, tool_use_id: call.use, tool_input: call.input })

@@ -72,6 +72,27 @@ test('a command that is the start of another still gets its own card', async () 
   expect(lines().filter(line => line.hook_event_name === 'PermissionRequest').map(line => line.tool_input.command)).toEqual(['ls -la', 'ls'])
 })
 
+test('a prompt omp cut short is refused while another call waits: what is left could look like that call', async () => {
+  const { ctx, fire, lines } = omp()
+  await fire('tool_call', { toolName: 'bash', toolCallId: 'a', input: { command: `ls ${'x'.repeat(2000)}; rm -rf /important` } })
+  await fire('tool_call', { toolName: 'bash', toolCallId: 'b', input: { command: 'ls' } })
+  await fire('tool_approval_requested', { toolName: 'bash', toolCallId: 'a' })
+  await fire('tool_approval_requested', { toolName: 'bash', toolCallId: 'b' })
+  expect(await ctx.ui.approve!({ full: `Allow tool: bash\nCommand: ls ${'x'.repeat(100)}[…50ch elided…]` })).toBe('deny')
+  expect(lines().filter(line => line.hook_event_name === 'PermissionRequest')).toEqual([])
+})
+
+test('a subagent reusing a waiting call\'s id leaves its card as it was', async () => {
+  const { ctx, fire, lines } = omp()
+  const sub = { ...ctx, hasUI: false }
+  await fire('tool_call', { toolName: 'bash', toolCallId: 'a', input: { command: 'mine' } })
+  await fire('tool_call', { toolName: 'bash', toolCallId: 'a', input: { command: 'theirs' } }, sub)
+  await fire('tool_result', { toolName: 'bash', toolCallId: 'a' }, sub)
+  await fire('tool_approval_requested', { toolName: 'bash', toolCallId: 'a' })
+  await ctx.ui.approve!({ full: 'Allow tool: bash\nCommand: mine' })
+  expect(lines().at(-1).tool_input).toEqual({ command: 'mine' })
+})
+
 test('identical calls need no telling apart, and two a prompt can\'t tell apart are refused, not guessed', async () => {
   const { ctx, fire, lines } = omp()
   for (const id of ['a', 'b']) {
