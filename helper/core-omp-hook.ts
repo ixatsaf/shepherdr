@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process'
 type Call = { id: string; tool: string; name: string; use: string; input: unknown }
 
 // Shepherdr's card and its own-command check know Claude Code's name for a shell.
+const STOP_KEY = /^(?:\x03|\x1b|\x1b\[(?:27|99;5)(?:;\d+)*u)$/ // Esc or Ctrl-C, plain or in the kitty keyboard protocol
 const toolName = (name: string) => name === 'bash' ? 'Bash' : name
 
 export default function (omp: any) {
@@ -16,15 +17,17 @@ export default function (omp: any) {
   /** Which call this prompt is for: an answer must never reach a tool its card didn't show, so any doubt is a no. */
   const askedBy = (prompt: string) => {
     if (asks.length < 2) return asks[0]
-    const said = (call: Call) => prompt.includes(`Allow tool: ${call.tool}`) && Object.values(call.input ?? {}).some(value => typeof value === 'string' && prompt.includes(value.slice(0, 40)))
-    const found = asks.filter(said)
-    return found.length === 1 ? found[0] : undefined
+    // The call whose own words the prompt shows most of: `ls -la` is also `ls`. Identical calls are the same to allow.
+    const shown = (call: Call) => Math.max(0, ...Object.values(call.input ?? {}).map(value => typeof value === 'string' && prompt.includes(value) ? value.length : 0))
+    const same = asks.filter(call => prompt.includes(`Allow tool: ${call.tool}`))
+    const most = Math.max(0, ...same.map(shown)), found = same.filter(call => shown(call) === most)
+    return found.length === 1 || found.every(call => JSON.stringify(call.input) === JSON.stringify(found[0]!.input)) ? found[0] : undefined
   }
 
   const hook = (event: string, ctx: any, fields: Record<string, unknown> = {}) => new Promise<string>(resolve => {
     // A subagent runs in this process with no UI: its own ends and session aren't the task's. The task tool stands for it.
     if (!ctx.hasUI) return resolve('')
-    const child = spawn('sh', ['-c', process.env.SHEPHERDR_OMP_HOOK ?? 'exit 1'], { stdio: ['pipe', 'pipe', 'ignore'] })
+    const child = spawn('sh', ['-c', `exec ${process.env.SHEPHERDR_OMP_HOOK ?? 'false'}`], { stdio: ['pipe', 'pipe', 'ignore'] })
     let out = ''
     running.add(child)
     child.stdout!.on('data', chunk => { out += chunk })
@@ -41,8 +44,12 @@ export default function (omp: any) {
     const ask = askedBy(String(prompt?.full ?? ''))
     if (!ask) return 'deny'
     asks.splice(asks.indexOf(ask), 1)
-    const out = await hook('PermissionRequest', ctx, { tool_name: ask.name, tool_use_id: ask.use, tool_input: ask.input })
-    try { return JSON.parse(out).hookSpecificOutput.decision.behavior === 'allow' ? 'once' : 'deny' } catch { return 'deny' }
+    // omp gives ui.approve no abort signal: a stop key is the only word that this prompt's turn was interrupted. The hook then closes the card.
+    const off = ctx.ui.onTerminalInput?.((key: string) => { if (STOP_KEY.test(key)) for (const child of running) child.kill('SIGTERM') })
+    try {
+      const out = await hook('PermissionRequest', ctx, { tool_name: ask.name, tool_use_id: ask.use, tool_input: ask.input })
+      return JSON.parse(out).hookSpecificOutput.decision.behavior === 'allow' ? 'once' : 'deny'
+    } catch { return 'deny' } finally { off?.() }
   }
 
   omp.on('session_start', (_: unknown, ctx: any) => hook('SessionStart', ctx))

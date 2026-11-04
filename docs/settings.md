@@ -28,7 +28,7 @@
   for provisioning and the upgrade steps for already-running agents.
 
 - Interactive task, coordinator and backup chat choices require both runtime log discovery and a chat reader.
-  Settings and Restart offer Claude Code and Codex; other herdr CLIs are refused before a chat launch because
+  Settings and Restart offer Claude Code and Codex, and for a task's own agent [Oh My Pi](core/start.md#oh-my-pi-task-agents); other herdr CLIs are refused before a chat launch because
   their replies cannot be shown. Existing saved choices are kept, but an unsupported choice must be changed before
   launching again. Headless reviewer choices are separate; this does not add or prove support for other reviewers.
 

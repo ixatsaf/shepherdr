@@ -16,7 +16,7 @@ function omp(answer = '{"hookSpecificOutput":{"decision":{"behavior":"allow"}}}'
   process.env.SHEPHERDR_OMP_HOOK = `sh -c 'read -r line || true; echo "$line" >> ${log}; case "$line" in *PermissionRequest*) cat ${reply};; esac'`
   const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>()
   extension({ on: (name: string, run: (event: unknown, ctx: unknown) => unknown) => handlers.set(name, run) })
-  const ctx = { hasUI: true, ui: {} as { approve?: (prompt?: { full: string }) => Promise<string> }, model: { provider: 'acme', id: 'one' }, sessionManager: { getSessionId: () => 'session', getSessionFile: () => '/log.jsonl' } }
+  const ctx = { hasUI: true, ui: {} as { approve?: (prompt?: { full: string }) => Promise<string>; onTerminalInput?: (listen: (key: string) => void) => () => void }, model: { provider: 'acme', id: 'one' }, sessionManager: { getSessionId: () => 'session', getSessionFile: () => '/log.jsonl' } }
   return {
     ctx,
     fire: (name: string, event: unknown = {}, at: unknown = ctx) => handlers.get(name)!(event, at),
@@ -61,17 +61,35 @@ test('two calls asking at once each get the card for what omp asks, in whatever 
   expect(lines().filter(line => line.hook_event_name === 'PermissionRequest').map(line => line.tool_input)).toEqual([{ command: 'rm -rf build' }, { path: 'notes.md' }])
 })
 
-test('a prompt that could be either of two calls is refused, not guessed', async () => {
+test('a command that is the start of another still gets its own card', async () => {
   const { ctx, fire, lines } = omp()
-  await fire('tool_call', { toolName: 'bash', toolCallId: 'a', input: { command: 'git push origin one' } })
-  await fire('tool_call', { toolName: 'bash', toolCallId: 'b', input: { command: 'git push origin two' } })
+  await fire('tool_call', { toolName: 'bash', toolCallId: 'a', input: { command: 'ls', empty: '' } })
+  await fire('tool_call', { toolName: 'bash', toolCallId: 'b', input: { command: 'ls -la' } })
   await fire('tool_approval_requested', { toolName: 'bash', toolCallId: 'a' })
   await fire('tool_approval_requested', { toolName: 'bash', toolCallId: 'b' })
-  expect(await ctx.ui.approve!({ full: 'Allow tool: bash\nCommand: something else' })).toBe('deny')
-  await fire('tool_approval_resolved', { toolCallId: 'a', approved: false })
-  expect(lines().filter(line => line.hook_event_name === 'PermissionRequest')).toEqual([])
-  expect(await ctx.ui.approve!({ full: 'Allow tool: bash\nCommand: git push origin two' })).toBe('once')
-  expect(lines().at(-1).tool_input).toEqual({ command: 'git push origin two' })
+  expect(await ctx.ui.approve!({ full: 'Allow tool: bash\nCommand: ls -la' })).toBe('once')
+  expect(await ctx.ui.approve!({ full: 'Allow tool: bash\nCommand: ls' })).toBe('once')
+  expect(lines().filter(line => line.hook_event_name === 'PermissionRequest').map(line => line.tool_input.command)).toEqual(['ls -la', 'ls'])
+})
+
+test('identical calls need no telling apart, and two a prompt can\'t tell apart are refused, not guessed', async () => {
+  const { ctx, fire, lines } = omp()
+  for (const id of ['a', 'b']) {
+    await fire('tool_call', { toolName: 'bash', toolCallId: id, input: { command: 'same' } })
+    await fire('tool_approval_requested', { toolName: 'bash', toolCallId: id })
+  }
+  expect(await ctx.ui.approve!({ full: 'Allow tool: bash\nCommand: same' })).toBe('once')
+  await ctx.ui.approve!({ full: 'Allow tool: bash\nCommand: same' })
+  for (const [id, path] of [['c', 'one.md'], ['d', 'two.md']]) {
+    await fire('tool_call', { toolName: 'read', toolCallId: id, input: { path } })
+    await fire('tool_approval_requested', { toolName: 'read', toolCallId: id })
+  }
+  const asked = lines().length
+  expect(await ctx.ui.approve!({ full: 'Allow tool: read' })).toBe('deny')
+  expect(lines().length).toBe(asked)
+  await fire('tool_approval_resolved', { toolCallId: 'c', approved: false })
+  expect(await ctx.ui.approve!({ full: 'Allow tool: read' })).toBe('once')
+  expect(lines().at(-1).tool_input).toEqual({ path: 'two.md' })
 })
 
 for (const [why, answer] of [['says no', '{"hookSpecificOutput":{"decision":{"behavior":"deny"}}}'], ['answers nothing', ''], ['answers nonsense', 'not json']] as const) {
@@ -90,6 +108,21 @@ test('an approval with nothing asked is refused', async () => {
   await ctx.ui.approve!()
   expect(await ctx.ui.approve!()).toBe('deny')
 })
+
+test('a stop key while a card is open ends its hook, whatever it was to answer, and only then', async () => {
+  const { ctx, fire } = omp()
+  process.env.SHEPHERDR_OMP_HOOK = `sh -c 'trap "exit 0" TERM; sleep 30 >/dev/null & wait'`
+  const listening: ((key: string) => void)[] = []
+  ctx.ui.onTerminalInput = listen => { listening.push(listen); return () => { listening.length = 0 } }
+  await fire('tool_call', { toolName: 'bash', toolCallId: 'a', input: { command: 'rm' } })
+  await fire('tool_approval_requested', { toolName: 'bash', toolCallId: 'a' })
+  const answer = ctx.ui.approve!({ full: 'Allow tool: bash' })
+  await Bun.sleep(200)
+  listening[0]!('x')
+  listening[0]!('\x1b')
+  expect(await answer).toBe('deny')
+  expect(listening).toEqual([])
+}, 15_000)
 
 test('a subagent, with no UI, says nothing about the task', async () => {
   const { ctx, fire, lines } = omp()

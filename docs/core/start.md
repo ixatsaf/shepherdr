@@ -73,7 +73,7 @@ another checkout ref. Keep the installed source/dependencies available while it 
 A task can run on Oh My Pi: `task add --agent omp`, or `task.agent` set to Oh My Pi in Settings. `shepherdr models omp`
 lists its models. Its row, status, chat, permission cards, review and merge work as for any task. `tools.approvalMode`
 in `~/.omp/agent/config.yml` decides what asks; a task starts on `write`, which asks before every shell command, where it
-is unset. `yolo` there means no cards at all.
+is unset. `yolo` there means no cards at all. A repo's `.omp` can make a task ask more, never less.
 
 Its task runs through `helper/core-omp-hook.ts`, an omp extension that sends its events to the same hook as other CLIs
 and answers its prompts through `ui.approve`, the slot omp keeps for a host. An omp release that stops reading that
@@ -82,7 +82,8 @@ slot would show its prompt only in the Terminal panel, with the chat still sayin
 - **Task agents on the main machine only.** Coordinators, reviewers, backups, Autopilot and other machines refuse it.
   Set for Everywhere, a task added on another machine needs its own `--agent`.
 - **Subagents don't ask.** Allowing omp's `task` tool lets its subagents run their own commands with no further card.
-- **Allow once only.** A card has no "for this session" choice yet.
+- **Allow once only.** A card has no "for this session" choice yet. Two calls asking at once that omp's prompt can't
+  tell apart are refused rather than guessed: the agent is told no, and can ask again.
 - **The chat shows replies, not tool steps.** Its log is read as pi's is, without steps or background jobs.
 - **Its own question box is refused.** An agent is told to ask with `shepherdr ask` instead.
 
