@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { CoreAgents } from '../server/core/agents.ts'
+import { CoreAgents, ompApprovalMode } from '../server/core/agents.ts'
 import { CoreStore } from '../server/core/store.ts'
 import type { CoreAgent } from '../server/core/model.ts'
 import type { CoreSession } from '../server/core/session.ts'
@@ -186,6 +186,7 @@ test('Oh My Pi starts as a task with its extension, and nowhere else', async () 
     expect(run!.argv[run!.argv.indexOf('--hook') + 1]).toEndWith('helper/core-omp-hook.ts')
     expect(readFileSync(run!.argv[run!.argv.indexOf('--append-system-prompt') + 1], 'utf8')).toContain('Your role is task')
     expect(run!.env.SHEPHERDR_OMP_HOOK).toContain('helper/core-hook.ts')
+    expect(run!.argv).toContain('--approval-mode')
     expect(run!.env.SHEPHERDR_CORE_HOOK_FILE).toBeTruthy()
     count = 0
     const refused = async (promise: Promise<unknown>) => expect(promise).rejects.toThrow('only as a task agent')
@@ -212,5 +213,12 @@ test('only the card says an Oh My Pi task waits on a permission; its own word fo
     terminals.set('t1', { address: 't1', labels, status: { state: 'done' } })
     expect(agents.terminal(agent)?.status?.state).toBe('done')
   } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
+})
+
+test('an Oh My Pi task keeps the approval mode its human chose, and asks where none is chosen', () => {
+  const config = (value: unknown) => JSON.stringify({ 'tools.approvalMode': { value, type: 'enum' } })
+  expect(ompApprovalMode(config('always-ask'))).toBe('always-ask')
+  expect(ompApprovalMode(config('yolo'))).toBe('yolo')
+  for (const unset of ['{}', '', 'not json', config('odd')]) expect(ompApprovalMode(unset)).toBe('write')
 })
 

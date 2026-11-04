@@ -23,6 +23,17 @@ const EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'SessionEnd', 'Permi
 const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`
 const toml = (value: string) => JSON.stringify(value)
 
+/** The human's own approval mode. omp left to itself asks nothing, and every other CLI here asks: an unset one asks too. */
+export function ompApprovalMode(globalConfig: string) {
+  try {
+    const mode = JSON.parse(globalConfig)['tools.approvalMode']?.value
+    return ['always-ask', 'always-ask-cached', 'write', 'yolo'].includes(mode) ? mode as string : 'write'
+  } catch { return 'write' }
+}
+const ompConfig = async (path: string) => {
+  try { return await new Response(Bun.spawn(['omp', 'config', 'list', '--scope', 'global', '--json'], { stdin: 'ignore', stderr: 'ignore', timeout: 10_000, env: { ...process.env, PATH: path } }).stdout).text() } catch { return '' }
+}
+
 /** Agent processes belong to core; stopping Shepherdr only stops its observation timer. */
 export class CoreAgents {
   private launching = new Set<string>()
@@ -158,7 +169,7 @@ export class CoreAgents {
       if (options.effort) argv.push('--effort', options.effort)
       if (options.speed) argv.push('--fast-mode', options.speed === 'fast' ? 'on' : 'off')
     } else if (kind === 'omp') {
-      argv.push('--hook', join(root, 'helper/core-omp-hook.ts'), '--append-system-prompt', instructions, '--no-title')
+      argv.push('--hook', join(root, 'helper/core-omp-hook.ts'), '--append-system-prompt', instructions, '--no-title', '--approval-mode', ompApprovalMode(await ompConfig(path)))
       if (record.session) argv.push('--resume', record.session)
       if (options.model) argv.push('--model', options.model)
       if (options.effort) argv.push('--thinking', options.effort)

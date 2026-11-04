@@ -16,7 +16,7 @@ function omp(answer = '{"hookSpecificOutput":{"decision":{"behavior":"allow"}}}'
   process.env.SHEPHERDR_OMP_HOOK = `sh -c 'read -r line || true; echo "$line" >> ${log}; case "$line" in *PermissionRequest*) cat ${reply};; esac'`
   const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>()
   extension({ on: (name: string, run: (event: unknown, ctx: unknown) => unknown) => handlers.set(name, run) })
-  const ctx = { hasUI: true, ui: {} as { approve?: () => Promise<string> }, model: { provider: 'acme', id: 'one' }, sessionManager: { getSessionId: () => 'session', getSessionFile: () => '/log.jsonl' } }
+  const ctx = { hasUI: true, ui: {} as { approve?: (prompt?: { full: string }) => Promise<string> }, model: { provider: 'acme', id: 'one' }, sessionManager: { getSessionId: () => 'session', getSessionFile: () => '/log.jsonl' } }
   return {
     ctx,
     fire: (name: string, event: unknown = {}, at: unknown = ctx) => handlers.get(name)!(event, at),
@@ -50,15 +50,28 @@ test('a card and its tool call share a name, an input and an id of their own, ev
   expect(lines()[3].tool_use_id).not.toBe(pre.tool_use_id)
 })
 
-test('two calls asking at once get their own cards, in the order omp asked', async () => {
+test('two calls asking at once each get the card for what omp asks, in whatever order it asks', async () => {
   const { ctx, fire, lines } = omp()
-  await fire('tool_call', { toolName: 'bash', toolCallId: 'a', input: { command: 'first' } })
-  await fire('tool_call', { toolName: 'bash', toolCallId: 'b', input: { command: 'second' } })
+  await fire('tool_call', { toolName: 'read', toolCallId: 'a', input: { path: 'notes.md' } })
+  await fire('tool_call', { toolName: 'bash', toolCallId: 'b', input: { command: 'rm -rf build' } })
+  await fire('tool_approval_requested', { toolName: 'read', toolCallId: 'a' })
+  await fire('tool_approval_requested', { toolName: 'bash', toolCallId: 'b' })
+  expect(await ctx.ui.approve!({ full: 'Allow tool: bash\nCommand: rm -rf build' })).toBe('once')
+  expect(await ctx.ui.approve!({ full: 'Allow tool: read\nPath: notes.md' })).toBe('once')
+  expect(lines().filter(line => line.hook_event_name === 'PermissionRequest').map(line => line.tool_input)).toEqual([{ command: 'rm -rf build' }, { path: 'notes.md' }])
+})
+
+test('a prompt that could be either of two calls is refused, not guessed', async () => {
+  const { ctx, fire, lines } = omp()
+  await fire('tool_call', { toolName: 'bash', toolCallId: 'a', input: { command: 'git push origin one' } })
+  await fire('tool_call', { toolName: 'bash', toolCallId: 'b', input: { command: 'git push origin two' } })
   await fire('tool_approval_requested', { toolName: 'bash', toolCallId: 'a' })
   await fire('tool_approval_requested', { toolName: 'bash', toolCallId: 'b' })
-  await ctx.ui.approve!()
-  await ctx.ui.approve!()
-  expect(lines().filter(line => line.hook_event_name === 'PermissionRequest').map(line => line.tool_input.command)).toEqual(['first', 'second'])
+  expect(await ctx.ui.approve!({ full: 'Allow tool: bash\nCommand: something else' })).toBe('deny')
+  await fire('tool_approval_resolved', { toolCallId: 'a', approved: false })
+  expect(lines().filter(line => line.hook_event_name === 'PermissionRequest')).toEqual([])
+  expect(await ctx.ui.approve!({ full: 'Allow tool: bash\nCommand: git push origin two' })).toBe('once')
+  expect(lines().at(-1).tool_input).toEqual({ command: 'git push origin two' })
 })
 
 for (const [why, answer] of [['says no', '{"hookSpecificOutput":{"decision":{"behavior":"deny"}}}'], ['answers nothing', ''], ['answers nonsense', 'not json']] as const) {

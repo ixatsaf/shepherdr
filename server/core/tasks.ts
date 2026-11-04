@@ -652,7 +652,7 @@ export class CoreTasks {
       case 'restart':
         if (['merged', 'closed'].includes(task.workflow)) throw new Refusal('This task is Done; ask its coordinator for follow-up work')
         if (action.kind && !kindOf(action.kind)) throw new Refusal('Choose Claude Code, Codex or Oh My Pi')
-        if (action.kind === 'omp' && (task.pilot || this.source.settings.ompProblem(task.machine))) throw new Refusal(OMP_ONLY)
+        if (action.kind && kindOf(action.kind) === 'omp' && (task.pilot || this.source.settings.ompProblem(task.machine))) throw new Refusal(OMP_ONLY)
         const current = this.source.pilots.policy.current(task.place)
         const owned = task.pilot && this.source.pilots.policy.get(task.pilot)
         const profile = owned && ['on', 'workers'].includes(owned.state) ? this.source.pilots.policy.live(owned.id) : current?.state === 'on' ? this.source.pilots.policy.live(current.id) : undefined
