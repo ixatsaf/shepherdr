@@ -2,8 +2,9 @@
 import { expect, test } from 'bun:test'
 import { ClaudeReader } from '../server/common/readers/claude.ts'
 import { CodexReader } from '../server/common/readers/codex.ts'
+import { OmpReader, PiReader } from '../server/common/readers/pi.ts'
 import type { Reader } from '../server/common/readers/types.ts'
-import { speedWord } from '../shared/models.ts'
+import { parseOmp, speedWord } from '../shared/models.ts'
 
 const at = '2026-10-30T20:05:29.899Z', time = Date.parse(at)
 const runtimes = (reader: Reader, ...records: object[]) =>
@@ -64,4 +65,44 @@ test('Codex records an effort only when one is set: without one its model defaul
 
 test('speeds read in plain words, and an unknown one stays as logged', () => {
   expect(['standard', 'default', 'priority', 'fast', 'Ultrafast', 'flex', '', null].map(speedWord)).toEqual(['normal', 'normal', 'fast', 'fast', 'ultrafast', 'flex', undefined, undefined])
+})
+
+// Cut down from a real Oh My Pi 18.16 session.
+const ompLog = [
+  { type: 'title', v: 1, title: 'x', source: 'auto' },
+  { type: 'session', version: 3, id: 'omp-session', timestamp: at, cwd: '/w' },
+  { type: 'model_change', id: 'a', timestamp: at, model: 'ollama-cloud/deepseek:1017' },
+  { type: 'thinking_level_change', id: 'b', timestamp: at, thinkingLevel: 'high' },
+  { type: 'custom', customType: 'date-cwd-reminder', data: { reminder: 'hidden' }, id: 'c', timestamp: at },
+  { type: 'message', id: 'd', timestamp: at, message: { role: 'user', content: [{ type: 'text', text: 'Do it' }], attribution: 'user' } },
+  { type: 'message', id: 'e', timestamp: at, message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'hidden' }, { type: 'toolCall', id: 't', name: 'read', arguments: {} }], provider: 'ollama-cloud', model: 'deepseek:1017', usage: { totalTokens: 10 }, stopReason: 'toolUse' } },
+  { type: 'message', id: 'f', timestamp: at, message: { role: 'toolResult', toolCallId: 't', toolName: 'read', content: [{ type: 'text', text: 'hidden' }] } },
+  { type: 'message', id: 'g', timestamp: at, message: { role: 'assistant', content: [{ type: 'text', text: 'Done' }], provider: 'ollama-cloud', model: 'deepseek:1017', usage: { totalTokens: 20 }, stopReason: 'stop' } },
+]
+const ompEvents = () => new OmpReader().parse(ompLog.map((r, offset) => ({ text: JSON.stringify(r), offset })), 'log.jsonl')
+
+test('Oh My Pi\'s log gives its session, words and turn, and nothing it keeps to itself', () => {
+  const events = ompEvents()
+  expect(events.find((e) => e.kind === 'session')).toMatchObject({ sessionId: 'omp-session' })
+  expect(events.flatMap((e) => (e.kind === 'user' || e.kind === 'agent' ? [[e.kind, e.text]] : []))).toEqual([['user', 'Do it'], ['agent', 'Done']])
+  expect(events.filter((e) => e.kind === 'turn-end').length).toBe(1)
+  expect(JSON.stringify(events)).not.toContain('hidden')
+})
+
+test('Oh My Pi names its model as its --model takes it, from the log\'s start to its replies', () => {
+  expect(ompEvents().flatMap((e) => (e.kind === 'runtime' && e.runtime.model ? [e.runtime.model] : []))).toEqual(Array(3).fill('ollama-cloud/deepseek:1017'))
+})
+
+test('pi still names a model as it logs it', () => {
+  expect(runtimes(new PiReader(), { type: 'model_change', id: 'a', timestamp: at, modelId: 'gpt' }, { type: 'message', id: 'b', timestamp: at, message: { role: 'assistant', content: [], provider: 'p', model: 'gpt' } }).map((e) => e.runtime.model)).toEqual(['gpt', 'gpt'])
+})
+
+test('`omp models --json` becomes a catalog by selector, chat models only', () => {
+  expect(parseOmp(JSON.stringify({ models: [
+    { provider: 'p', kind: 'chat', id: 'a', selector: 'p/a', name: 'A', thinking: ['low', 'high', 'odd'] },
+    { provider: 'p', kind: 'chat', id: 'b', selector: 'p/b', name: '', thinking: null },
+    { provider: 'p', kind: 'image', id: 'c', selector: 'p/c', name: 'C' },
+  ] }))?.models).toEqual([{ id: 'p/a', label: 'A', efforts: ['low', 'high'] }, { id: 'p/b', label: 'p/b', efforts: [] }])
+  expect(parseOmp('not json')).toBeUndefined()
+  expect(parseOmp('{"models":[]}')).toBeUndefined()
 })

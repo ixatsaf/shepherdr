@@ -1,5 +1,5 @@
 import type { SettingRow, SettingSection, RestartCli } from '../../shared/types.ts'
-import { SPEEDS, TABLE, nearest, parseCodex, type CliModels } from '../../shared/models.ts'
+import { SPEEDS, TABLE, nearest, parseCodex, parseOmp, type CliModels } from '../../shared/models.ts'
 import type { CoreStore } from './store.ts'
 import type { CoreFiles } from './files.ts'
 import type { MachineLimits } from '../health.ts'
@@ -7,15 +7,19 @@ import { timeRule, timeWords, nextWords, eventRules, eventWords, validZone, OWN_
 import { PILOT_SETTINGS, corePilotConfig } from './pilot-settings.ts'
 import { pilotHosts } from './pilot-policy.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
+import { Refusal } from './client.ts'
 import { NOTIFY, NOTIFY_DEFAULT, NOTIFY_KEY } from '../../shared/alerts.ts'
 import { MACHINE_CHECK, parseMachineCheck, sameCheck, type CliState, type MachineCheck } from './machine-check.ts'
 
 export type Role = 'coordinator' | 'task' | 'reviewer' | 'backup'
-export const CLI_NAME = { claude: 'Claude Code', codex: 'Codex' }
+export const CLI_NAME = { claude: 'Claude Code', codex: 'Codex', omp: 'Oh My Pi' }
 const names = CLI_NAME
+/** Oh My Pi is only a task's agent, on the main machine: everything else stays on these. */
+const FULL_CLIS = [names.claude, names.codex]
+export const OMP_ONLY = 'Oh My Pi runs only as a task agent on the main machine. Choose Claude Code or Codex here.'
 export const kindOf = (word: string): AgentKind | undefined => Object.entries(names).find(([kind, name]) => [kind, name.toLowerCase()].includes(word.trim().toLowerCase()))?.[0] as AgentKind | undefined
 const roleRows = (role: Role, group: string): SettingRow[] => [
-  { group, key: `${role}.agent`, label: 'Agent', value: role === 'reviewer' ? 'Codex' : 'Claude Code', options: Object.values(names) },
+  { group, key: `${role}.agent`, label: 'Agent', value: role === 'reviewer' ? 'Codex' : 'Claude Code', options: role === 'task' ? Object.values(names) : FULL_CLIS },
   { group, key: `${role}.model`, label: 'Model', value: 'default', text: true },
   { group, key: `${role}.effort`, label: 'Effort', value: 'default', options: ['default', ...TABLE[role === 'reviewer' ? 'codex' : 'claude'].efforts] },
 ]
@@ -52,7 +56,7 @@ const CATALOG: SettingSection[] = [
     ...roleRows('reviewer', 'Reviewer'),
   ] },
   { name: 'Agents', about: "What each kind of agent starts with. Default is the agent's own model or effort. Backup takes a task over when its agent can't go on. Chat choices need a chat log reader; other installed CLIs cannot show replies here. Headless review is separate.", rows: [...roleRows('task', 'Tasks'), ...roleRows('coordinator', 'Coordinators'),
-    { group: 'Backup', key: 'task.fallback', label: 'Agent', value: 'Codex', options: ['off', ...Object.values(names)] },
+    { group: 'Backup', key: 'task.fallback', label: 'Agent', value: 'Codex', options: ['off', ...FULL_CLIS] },
     { group: 'Backup', key: 'backup.model', label: 'Model', value: 'default', text: true },
     { group: 'Backup', key: 'backup.effort', label: 'Effort', value: 'default', options: ['default', ...TABLE.codex.efforts] },
     ] },
@@ -98,8 +102,9 @@ export class CoreSettings {
    *  back on the task agent's own CLI; a backup can't, as a task never fails over to the CLI it runs on. Only a machine
    *  never yet checked keeps the plain order: an answer it couldn't read proves nothing, so that CLI isn't picked. */
   private usableDefault(key: string, level: string, running?: AgentKind) {
-    const own = running ?? kindOf(this.get('task.agent', level)) ?? 'claude', other: AgentKind = own === 'claude' ? 'codex' : 'claude', machines = this.machinesAt(level)
-    const order = key === 'task.fallback' ? [other] : [other, own]
+    const runs = running ?? kindOf(this.get('task.agent', level)) ?? 'claude', own: AgentKind = runs === 'omp' ? 'codex' : runs, other: AgentKind = own === 'claude' ? 'codex' : 'claude', machines = this.machinesAt(level)
+    // Oh My Pi is neither a reviewer nor a backup, so both others stay open to its tasks.
+    const order = key === 'task.fallback' && runs !== 'omp' ? [other] : [other, own]
     // Everywhere only shows it: each space follows its own machine
     const pick = order.find(kind => machines.some(machine => this.cliAt(kind, [machine]) === 'ready')) ?? (machines.some(machine => !this.store.get('machine-check', machine)) ? other : undefined)
     return pick ? names[pick] : key === 'task.fallback' ? 'off' : names[own]
@@ -128,6 +133,7 @@ export class CoreSettings {
       if (key.endsWith('.agent') || key === 'task.fallback' && value.toLowerCase() !== 'off') {
         const kind = kindOf(value)
         if (!kind && !(key === 'autopilot.agent' && value === 'inherit')) throw new Error('Choose Claude Code or Codex')
+        if (kind === 'omp' && (key !== 'task.agent' || level !== 'all' && this.machine(level) !== this.localMachine())) throw new Refusal(OMP_ONLY)
         if (kind) value = names[kind]
       } else if (key === 'task.fallback' && value.toLowerCase() === 'off') value = 'off'
       else if (row.num) {
@@ -207,13 +213,18 @@ export class CoreSettings {
     const level = `m:${machine}`, num = (key: string) => { const value = parseFloat(this.get(key, level)); return Number.isFinite(value) ? value : null }
     return { max: num('machine.maxTasks'), startLoad: num('machine.startLoad'), startMemory: num('machine.startMemory'), alertLoad: num('machine.alertLoad'), alertMemory: num('machine.alertMemory'), alertDisk: num('machine.alertDisk'), alertHerdr: this.get('machine.alertHerdr', level) !== 'off' }
   }
+  private localMachine() { return this.store.get<{ id: string }>('meta', 'local')?.id }
+  /** Why a task can't run on Oh My Pi on this machine. */
+  ompProblem(machine: string) { return machine === this.localMachine() ? undefined : OMP_ONLY }
   private machine(level: string) { return level.startsWith('m:') ? level.slice(2) : this.spaces().find(item => item.id === level)?.machine }
   catalog(kind: AgentKind, level: string): CliModels {
     const machine = this.machine(level)
     return machine && this.store.get<CliModels>('models', `${machine}:${kind}`) || TABLE[kind]
   }
-  clis(level: string): RestartCli[] {
-    return (['claude', 'codex'] as const).map(kind => ({ kind, name: names[kind], ...this.catalog(kind, level), speeds: SPEEDS }))
+  /** What a coordinator can restart on; a task's agent also has Oh My Pi on the main machine, which has no speeds to pick. */
+  clis(level: string, task = false): RestartCli[] {
+    const omp: RestartCli[] = task && this.machine(level) === this.localMachine() ? [{ kind: 'omp', name: names.omp, ...this.catalog('omp', level) }] : []
+    return [...(['claude', 'codex'] as const).map(kind => ({ kind, name: names[kind], ...this.catalog(kind, level), speeds: SPEEDS })), ...omp]
   }
   /** Why a chosen reviewer or backup can't work: which CLI, and where. */
   private cliWarning(key: string, level: string) {
@@ -286,6 +297,7 @@ export class CoreSettings {
   /** Query the CLI on its own machine, through core only. No app startup dependency. */
   probe(machine: string) {
     this.check(machine)
+    if (machine === this.localMachine()) this.probeOmp(machine)
     if (this.probing.has(machine)) return
     const saved = this.store.get<CliModels>('models', `${machine}:codex`)
     if (saved?.at && Date.now() - saved.at < 6 * 3_600_000) return
@@ -294,6 +306,15 @@ export class CoreSettings {
       const catalog = parseCodex(bytes.toString('utf8'))
       if (catalog) { this.store.set('models', `${machine}:codex`, { ...catalog, at: Date.now() }); this.changed() }
     }).catch(() => {}).finally(() => this.probing.delete(machine))
+  }
+  private probeOmp(machine: string) {
+    const key = `omp:${machine}`, saved = this.store.get<CliModels>('models', `${machine}:omp`)
+    if (this.probing.has(key) || saved?.at && Date.now() - saved.at < 6 * 3_600_000) return
+    this.probing.add(key)
+    void this.files.exec(machine, ['sh', '-c', 'exec omp models --json </dev/null'], undefined, undefined, 20).then(bytes => {
+      const catalog = parseOmp(bytes.toString('utf8'))
+      if (catalog) { this.store.set('models', `${machine}:omp`, { ...catalog, at: Date.now() }); this.changed() }
+    }).catch(() => {}).finally(() => this.probing.delete(key))
   }
   /** What the machine can run: a failed check keeps the last one, and never counts against a CLI. */
   private check(machine: string) {

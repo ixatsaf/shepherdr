@@ -25,7 +25,7 @@ export const PILOT_SETTINGS: SettingSection = {
 export function corePilotConfig(settings: CoreSettings, level: string): CorePilotConfig {
   const get = (key: string) => settings.get(`autopilot.${key}`, level), base = settings.agent('coordinator', level)
   const kind = get('agent') === 'inherit' ? base.kind : kindOf(get('agent'))
-  if (!kind) throw Error('Choose Claude Code or Codex')
+  if (!kind || kind === 'omp') throw Error('Choose Claude Code or Codex')
   const raw = get('model'), model = raw === 'inherit' ? base.model : raw === 'default' || !raw ? undefined : settings.catalog(kind, level).models.find(item => item.id === raw || item.label === raw)?.id ?? raw
   const requested = get('effort'), effort = requested === 'inherit' ? base.effort : requested === 'default' ? undefined : requested
   const catalog = settings.catalog(kind, level), offered = catalog.models.find(item => item.id === model)?.efforts ?? catalog.efforts

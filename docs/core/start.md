@@ -10,6 +10,7 @@ for accepted, unverified limits. Stop and preserve legacy writers/state through 
 - Bun 1.4.2 (the CI-pinned version), Git, and herdr-core **0.1.14 or newer**, generation 1. A core that herdr-app or
   `hc update` moved forward is fine.
 - Claude Code or Codex installed and signed in on each machine that runs agents.
+- Optional: [Oh My Pi](#oh-my-pi-task-agents) 18.16 or newer on the main machine, for task agents.
 - Tailscale on the server and the devices opening the app.
 
 Build the reviewed source on a build machine or CI, not the shared agent VM:
@@ -66,6 +67,22 @@ socket paths short. Never share the core socket over the network.
 watcher and switches. Ordinary startup watches the selected home's plugins and off list, builds from a fixed copy
 of the started application, and swaps plugin runtime/assets without restarting agents. It never follows main or
 another checkout ref. Keep the installed source/dependencies available while it runs. See [Plugins](../plugins.md).
+
+## Oh My Pi task agents
+
+A task can run on Oh My Pi: `task add --agent omp`, or `task.agent` set to Oh My Pi in Settings. `shepherdr models omp`
+lists its models. Its row, status, chat, permission cards, review and merge work as for any task. Its own settings in
+`~/.omp/agent/config.yml` apply, so `tools.approvalMode` decides what asks: `write` asks before every shell command.
+
+Its task runs through `helper/core-omp-hook.ts`, an omp extension that sends its events to the same hook as other CLIs
+and answers its prompts through `ui.approve`, the slot omp keeps for a host. An omp release that stops reading that
+slot would show its prompt only in the Terminal panel, with the chat still saying Working.
+
+- **Task agents on the main machine only.** Coordinators, reviewers, backups, Autopilot and other machines refuse it.
+- **Subagents don't ask.** Allowing omp's `task` tool lets its subagents run their own commands with no further card.
+- **Allow once only.** A card has no "for this session" choice yet.
+- **The chat shows replies, not tool steps.** Its log is read as pi's is, without steps or background jobs.
+- **Its own question box is refused.** An agent is told to ask with `shepherdr ask` instead.
 
 ## First Codex start
 

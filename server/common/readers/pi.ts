@@ -32,6 +32,8 @@ export class PiReader implements Reader {
   /** files whose last turn ended: a reply that comes next (pi retrying an error) starts a turn of its own */
   private ended = new Set<string>()
 
+  protected modelOf(m: Json): unknown { return m.model }
+
   reset(file: string) {
     this.sessions.delete(file)
     this.ended.delete(file)
@@ -50,7 +52,7 @@ export class PiReader implements Reader {
         out.push({ kind: 'session', file, id: `session-${l.id}`, at: t, sessionId: l.id })
       } else if (l.type === 'model_change' || l.type === 'thinking_level_change') {
         const runtime = { source: 'session' as const, at: t,
-          ...(l.type === 'model_change' && typeof l.modelId === 'string' ? { model: l.modelId } : {}),
+          ...(l.type === 'model_change' && typeof (l.modelId ?? l.model) === 'string' ? { model: l.modelId ?? l.model } : {}),
           ...(l.type === 'thinking_level_change' && typeof l.thinkingLevel === 'string' ? { effort: l.thinkingLevel } : {}),
         }
         out.push({ kind: 'runtime', file, id: `runtime-${offset}`, at: t, runtime })
@@ -65,7 +67,8 @@ export class PiReader implements Reader {
           const words = texts(m.content).map(cleanUser).filter(Boolean).join('\n\n')
           if (words) out.push({ kind: 'user', id, at: t, text: words })
         } else if (m.role === 'assistant') {
-          if (typeof m.model === 'string') out.push({ kind: 'runtime', file, id: `runtime-model-${offset}`, at: t, runtime: { model: m.model, source: 'session', at: t } })
+          const model = this.modelOf(m)
+          if (typeof model === 'string') out.push({ kind: 'runtime', file, id: `runtime-model-${offset}`, at: t, runtime: { model, source: 'session', at: t } })
           const words = texts(m.content)
             .map((s) => s.trim())
             .filter(Boolean)
@@ -85,4 +88,10 @@ export class PiReader implements Reader {
     }
     return out
   }
+}
+
+/** Oh My Pi logs as pi does, and names a model by provider/id, as its --model and `omp models` do. */
+export class OmpReader extends PiReader {
+  cli = 'omp'
+  protected modelOf(m: Json) { return typeof m.provider === 'string' && typeof m.model === 'string' ? `${m.provider}/${m.model}` : m.model }
 }

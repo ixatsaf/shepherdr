@@ -279,3 +279,28 @@ test('the machine check names no account: only a yes or no leaves the CLI', () =
   expect(MACHINE_CHECK).toContain(`grep -o '"loggedIn"`)
   expect(MACHINE_CHECK).not.toMatch(/email/)
 })
+
+test('Oh My Pi is only a task\'s agent on the main machine', () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-settings-omp-')), store = new CoreStore(home)
+  try {
+    store.set('meta', 'local', { id: 'main' })
+    const spaces = [{ id: 'here', name: 'Here', machine: 'main', folder: '/h', base: 'main', prefix: 'H', mode: 'regular', added: 1 }, { id: 'far', name: 'Far', machine: 'other', folder: '/f', base: 'main', prefix: 'F', mode: 'regular', added: 1 }] as CoreSpace[]
+    const settings = new CoreSettings(store, {} as CoreFiles, () => spaces, id => id, () => {})
+    for (const key of ['coordinator.agent', 'reviewer.agent', 'task.fallback', 'autopilot.agent']) expect(() => settings.set(key, 'omp', 'here')).toThrow('only as a task agent')
+    expect(() => settings.set('task.agent', 'omp', 'far')).toThrow('only as a task agent')
+    expect(() => settings.set('task.agent', 'omp', 'm:other')).toThrow('only as a task agent')
+    settings.set('task.agent', 'omp', 'here')
+    expect(settings.agent('task', 'here').kind).toBe('omp')
+    expect(settings.ompProblem('main')).toBeUndefined()
+    expect(settings.ompProblem('other')).toContain('only as a task agent')
+    // Its tasks still get a reviewer and a backup that can do those jobs.
+    expect(settings.agent('reviewer', 'here').kind).not.toBe('omp')
+    expect(settings.backupFor('here', 'omp')?.kind).not.toBe('omp')
+    const offers = (level: string, task?: boolean) => settings.clis(level, task).map(cli => cli.kind)
+    expect(offers('here')).toEqual(['claude', 'codex'])
+    expect(offers('here', true)).toEqual(['claude', 'codex', 'omp'])
+    expect(offers('far', true)).toEqual(['claude', 'codex'])
+    expect(settings.clis('here', true).at(-1)?.speeds).toBeUndefined()
+  } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
+})
+
