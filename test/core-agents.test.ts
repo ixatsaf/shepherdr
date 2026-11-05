@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { CoreAgents } from '../server/core/agents.ts'
+import { CoreAgents, ompApprovalMode } from '../server/core/agents.ts'
 import { CoreStore } from '../server/core/store.ts'
 import type { CoreAgent } from '../server/core/model.ts'
 import type { CoreSession } from '../server/core/session.ts'
@@ -169,3 +169,63 @@ for (const kind of ['claude', 'codex'] as const) test(`${kind} coordinator launc
     }
   } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+test('Oh My Pi starts as a task with its extension, and nowhere else', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-omp-start-')), store = new CoreStore(home)
+  try {
+    let run: { argv: string[]; env: Record<string, string> } | undefined, count = 0
+    const core = { current: { terminals: new Map() }, call: async (_method: string, input: { argv: string[]; env: Record<string, string> }) => { run = input; return { address: `t${++count}`, pid: count } } } as unknown as CoreSession
+    const mailbox = { issue: () => ({ id: `omp-grant-${count}`, credential: {} }), revoke: () => {} } as unknown as Mailbox
+    const route = async (machine: string) => machine === 'remote' ? 'remote' : undefined
+    const agents = new CoreAgents({ home, port: 0, session: 'test', socket: '/unused', binary: 'hc' }, { format: 'shepherdr-core', schema: 1, id: 'installation' }, core, store, mailbox, route, () => {})
+    const space = { id: 'space', name: 'Example', machine: 'machine', folder: '/unused', base: 'main', prefix: 'EX', mode: 'regular' as const, added: 1 }
+    await agents.launch(space, 'task', 'omp', 'Go', { role: 'task', model: 'p/m', effort: 'high' })
+    expect(run!.argv[0]).toBe('omp')
+    expect(run!.argv.slice(-2)).toEqual(['--', 'Go'])
+    expect(run!.argv.join(' ')).toContain('--model p/m --thinking high')
+    expect(run!.argv[run!.argv.indexOf('--hook') + 1]).toEndWith('helper/core-omp-hook.ts')
+    expect(readFileSync(run!.argv[run!.argv.indexOf('--append-system-prompt') + 1], 'utf8')).toContain('Your role is task')
+    expect(run!.env.SHEPHERDR_OMP_HOOK).toContain('helper/core-hook.ts')
+    expect(run!.argv).toContain('--approval-mode')
+    expect(run!.env.SHEPHERDR_CORE_HOOK_FILE).toBeTruthy()
+    count = 0
+    const refused = async (promise: Promise<unknown>) => expect(promise).rejects.toThrow('only as a task agent')
+    await refused(agents.launch(space, 'coordinator', 'omp', 'Go'))
+    await refused(agents.launch(space, 'reviewer', 'omp', 'Go', { role: 'reviewer', readOnly: true }))
+    await refused(agents.launch(space, 'pilot', 'omp', 'Go', { role: 'task', pilot: { run: 'r', hosts: [], repo: 'x' } }))
+    await refused(agents.launch({ ...space, machine: 'remote' }, 'far', 'omp', 'Go', { role: 'task' }))
+    expect(count).toBe(0)
+  } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
+})
+
+test('only the card says an Oh My Pi task waits on a permission; its own word for the rest still counts', () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-omp-status-')), store = new CoreStore(home)
+  try {
+    const labels = { 'shepherdr.installation': 'installation', 'shepherdr.launch': 'launch' }
+    const terminals = new Map<string, unknown>()
+    const agents = new CoreAgents({ home, port: 0, session: 'test', socket: '/unused', binary: 'hc' }, { format: 'shepherdr-core', schema: 1, id: 'installation' }, { current: { terminals } } as unknown as CoreSession, store, {} as Mailbox, async () => undefined, () => {})
+    const agent: CoreAgent = { chat: 'chat', space: 'space', machine: 'machine', role: 'task', kind: 'omp', launch: 'launch', grant: 'grant', hook: '/hook', terminal: 't1', started: 1, state: 'working' }
+    terminals.set('t1', { address: 't1', labels, status: { state: 'blocked', kind: 'permission', msg: 'Allow tool: bash' } })
+    expect(agents.terminal(agent)?.status).toBeNull()
+    expect(agents.terminal({ ...agent, kind: 'claude' })?.status?.state).toBe('blocked')
+    terminals.set('t1', { address: 't1', labels, status: { state: 'blocked', kind: 'question' } })
+    expect(agents.terminal(agent)?.status?.state).toBe('blocked')
+    terminals.set('t1', { address: 't1', labels, status: { state: 'done' } })
+    expect(agents.terminal(agent)?.status?.state).toBe('done')
+  } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
+})
+
+test('an Oh My Pi task keeps the approval mode its human chose, and asks where none is chosen', () => {
+  const config = (value: unknown) => JSON.stringify({ 'tools.approvalMode': { value, type: 'enum' } })
+  expect(ompApprovalMode(config('always-ask'))).toBe('always-ask')
+  expect(ompApprovalMode(config('yolo'))).toBe('yolo')
+  for (const unset of ['{}', config('odd')]) expect(ompApprovalMode(unset)).toBe('write')
+  for (const failed of ['', 'not json']) {
+    expect(ompApprovalMode(failed)).toBe('always-ask')
+    expect(ompApprovalMode(config('write'), failed)).toBe('always-ask')
+  }
+  expect(ompApprovalMode(config('write'), config('always-ask'))).toBe('always-ask')
+  expect(ompApprovalMode('{}', config('yolo'))).toBe('write')
+  expect(ompApprovalMode(config('always-ask'), config('yolo'))).toBe('always-ask')
+})
+

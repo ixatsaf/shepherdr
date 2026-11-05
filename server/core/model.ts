@@ -1,6 +1,6 @@
 import type { AgentRuntime, Mode } from '../../shared/types.ts'
 
-export type AgentKind = 'claude' | 'codex'
+export type AgentKind = 'claude' | 'codex' | 'omp'
 export interface CoreSpace {
   id: string
   name: string

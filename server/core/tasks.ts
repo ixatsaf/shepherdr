@@ -9,7 +9,7 @@ import { CorePilotRepositories } from './pilot-repositories.ts'
 import { CoreTaskRelocation } from './task-relocation.ts'
 import { CoreTaskProcesses } from './task-processes.ts'
 import { mergeWords, taskOptions, validateTaskSettings } from './task-options.ts'
-import { CLI_NAME, kindOf } from './settings.ts'
+import { CLI_NAME, OMP_ONLY, kindOf } from './settings.ts'
 import { CoreGit } from './git.ts'
 import { checkWords } from './github-pr.ts'
 import { pickSpeed } from '../common/restart.ts'
@@ -190,6 +190,7 @@ export class CoreTasks {
     const defaults = this.source.settings.checkedAgent(space.id, { kind: input.kind ?? selected.kind, model: input.model ?? selected.model, effort: input.effort ?? selected.effort })
     const reviewDefault = run?.config.reviewer ?? this.source.settings.launch('reviewer', space.id, input.reviewer)
     const reviewer = this.source.settings.checkedAgent(space.id, { kind: input.reviewer ?? reviewDefault.kind, model: input.reviewerModel ?? reviewDefault.model, effort: input.reviewerEffort ?? reviewDefault.effort })
+    if (defaults.kind === 'omp' && this.source.settings.ompProblem(space.machine) || reviewer.kind === 'omp') throw new Refusal(OMP_ONLY)
     if (run && (defaults.kind !== run.config.harness.kind || defaults.model !== run.config.harness.model || defaults.effort !== run.config.harness.effort || reviewer.kind !== run.config.reviewer.kind || reviewer.model !== run.config.reviewer.model || reviewer.effort !== run.config.reviewer.effort)) throw new Refusal('Contained tasks and reviewers use this run’s selected agent, model and effort')
     const overrides: Record<string, string> = { ...validateTaskSettings(input.settings ?? {}),
       ...(input.kind ? { 'task.agent': defaults.kind } : {}), ...(input.model !== undefined ? { 'task.model': defaults.model || 'default' } : {}), ...(input.effort !== undefined ? { 'task.effort': defaults.effort || 'default' } : {}),
@@ -397,8 +398,7 @@ export class CoreTasks {
     if (takeover && ['starting', 'queued'].includes(takeover.state) && launched.kind === takeover.to && launched.launch !== takeover.launch) {
       takeover.state = 'started'; delete takeover.handover; this.save(task)
       const card = `provider-takeover-${task.id}-${takeover.at}`
-      const name = (kind: AgentKind) => kind === 'codex' ? 'Codex' : 'Claude Code'
-      this.source.post(task.chat, { id: card, who: 'agent', card: { id: card, text: `${name(takeover.to)} took over from ${name(takeover.from)}: ${takeover.why}` }, at: Date.now() })
+      this.source.post(task.chat, { id: card, who: 'agent', card: { id: card, text: `${CLI_NAME[takeover.to]} took over from ${CLI_NAME[takeover.from]}: ${takeover.why}` }, at: Date.now() })
     }
     } catch (error) { task.startError = (error as Error).message; this.save(task); throw error }
   }
@@ -648,10 +648,11 @@ export class CoreTasks {
         await this.stopNow(task); return { ok: true }
       case 'restart-info': return { ok: true, info: { role: 'task', space: this.source.space(task.place)?.name, on: { kind: agent?.kind ?? task.kind, model: agent?.model, effort: agent?.effort, speed: agent?.speed }, onKnown: !!agent,
         onWords: agent?.kind ?? task.kind, want: this.source.settings.agent('task', task.place), working: agent?.state === 'working',
-        clis: this.source.settings.clis(task.place) } }
+        clis: this.source.settings.clis(task.place, !task.pilot) } }
       case 'restart':
         if (['merged', 'closed'].includes(task.workflow)) throw new Refusal('This task is Done; ask its coordinator for follow-up work')
-        if (action.kind && action.kind !== 'claude' && action.kind !== 'codex') throw new Refusal('Choose Claude Code or Codex')
+        if (action.kind && !kindOf(action.kind)) throw new Refusal('Choose Claude Code, Codex or Oh My Pi')
+        if (action.kind && kindOf(action.kind) === 'omp' && (task.pilot || this.source.settings.ompProblem(task.machine))) throw new Refusal(OMP_ONLY)
         const current = this.source.pilots.policy.current(task.place)
         const owned = task.pilot && this.source.pilots.policy.get(task.pilot)
         const profile = owned && ['on', 'workers'].includes(owned.state) ? this.source.pilots.policy.live(owned.id) : current?.state === 'on' ? this.source.pilots.policy.live(current.id) : undefined
@@ -970,7 +971,8 @@ export class CoreTasks {
     if (verb === 'task' && sub === 'add') {
       const settings = taskOptions(parsed), agentName = one(parsed, 'agent'), reviewerName = one(parsed, 'reviewer')
       const kind = agentName === undefined ? undefined : kindOf(agentName), reviewer = reviewerName === undefined ? undefined : kindOf(reviewerName)
-      if (agentName !== undefined && !kind || reviewerName !== undefined && !reviewer) throw new Refusal('Choose Claude Code or Codex')
+      if (agentName !== undefined && !kind) throw new Refusal('Choose Claude Code, Codex or Oh My Pi')
+      if (reviewerName !== undefined && !reviewer) throw new Refusal('Choose Claude Code or Codex')
       const task = await this.add(grant, { title: rest.join(' '), brief: one(parsed, 'brief') ?? one(parsed, 'desc') ?? '', space: one(parsed, 'space'), base: one(parsed, 'base'),
         after: one(parsed, 'after')?.split(',').filter(Boolean), later: parsed.flags.has('later'), kind, model: one(parsed, 'model'), effort: one(parsed, 'effort'), reviewer, reviewerModel: one(parsed, 'reviewer-model'), reviewerEffort: one(parsed, 'reviewer-effort'), settings })
       return text(`${task.id}: ${task.name}\nBranch: ${task.branch}\nWorktree: ${task.folder}\nCore terminal: ${this.source.agents.get(task.chat)?.terminal || 'starting'}`)

@@ -3,11 +3,11 @@
 import { closeSync, openSync, readSync, statSync } from 'node:fs'
 import { ClaudeReader } from './claude.ts'
 import { CodexReader } from './codex.ts'
-import { PiReader } from './pi.ts'
+import { OmpReader, PiReader } from './pi.ts'
 import { LOG_FINDERS } from './find.ts'
 import type { LogEvent, Reader } from './types.ts'
 
-export { ClaudeReader, CodexReader, PiReader }
+export { ClaudeReader, CodexReader, OmpReader, PiReader }
 
 const READERS: Record<string, () => Reader> = {
   claude: () => new ClaudeReader(),

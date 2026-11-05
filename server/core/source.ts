@@ -686,12 +686,12 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       if (!Array.isArray(input.args) || !input.args.every(arg => typeof arg === 'string')) throw new Error('Invalid command words')
       const args = input.args as string[]
       if (!args.length || args[0] === 'help' || args.includes('--help')) return { out: `Shepherdr standalone core commands (authenticated agent session):
-  show [--space NAME | --machine] [--section NAME] | models [claude|codex]
+  show [--space NAME | --machine] [--section NAME] | models [claude|codex|omp]
   set KEY VALUE | unset KEY [--space NAME | --machine] (regular coordinator, when the human asks)
   alert TITLE [--body WHY] [--task ID]
   space list | space add PATH [--name NAME] | space rename NAME NEW_NAME | space remove NAME
   space set base BRANCH --space NAME
-  task add TITLE --brief FULL_BRIEF [--desc FULL_BRIEF] [--agent claude|codex] [--model ID] [--effort LEVEL]
+  task add TITLE --brief FULL_BRIEF [--desc FULL_BRIEF] [--agent claude|codex|omp] [--model ID] [--effort LEVEL]
     [--reviewer claude|codex] [--reviewer-model ID] [--reviewer-effort LEVEL] [--set KEY=VALUE]
     [--space NAME] [--base BRANCH] [--later] [--after ID,ID]
   task list [--archived] [--space NAME] [--after next] | task show ID [--from nextFrom --revision REV]
@@ -760,8 +760,8 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     const previous = this.store.get<Permission>('permission', input.id)
     if (previous && (previous.grant !== grant.id || previous.chat !== grant.chat)) throw new Error('Permission id belongs to another session')
     if (previous?.settled) return previous.native?.reply ?? previous.reply ?? { allow: previous.allow === true }
-    // Claude's settings say this before it asks; Codex has no such setting for one launch, only this hook.
-    if (agent.kind === 'codex' && agent.role !== 'reviewer' && !agent.pilot && agent.command && ownCommand(agent.command, input.tool, input.input)) return { allow: true }
+    // Claude's settings say this before it asks; Codex and Oh My Pi have no such setting for one launch, only this hook.
+    if (agent.kind !== 'claude' && agent.role !== 'reviewer' && !agent.pilot && agent.command && ownCommand(agent.command, input.tool, input.input)) return { allow: true }
     const native = agent.kind === 'claude' ? nativeCards(input.tool, input.input, input.id, agent.permissionMode) : undefined
     if (native && !native.questions.length) return NATIVE_UNREADABLE
     const { cut, ...words } = permissionWords(input.tool, input.input)

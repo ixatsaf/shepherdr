@@ -49,7 +49,7 @@ test('settings refuse worker mutation, forged or stale identity, and unknown con
   const c = f.actor('app'), worker = f.actor('app', 'task')
   await expect(worker.cli('set', 'tasks.archiveAfter', '1 day')).rejects.toThrow('Only a regular coordinator')
   await expect(worker.cli('show', '--machine')).rejects.toThrow('own space')
-  await expect(c.cli('models', 'pi')).rejects.toThrow('Claude Code or Codex')
+  await expect(c.cli('models', 'pi')).rejects.toThrow('Choose Claude Code, Codex or Oh My Pi')
   expect(JSON.parse((await c.cli('models', 'codex'))!.out).map((cli: { kind: string }) => cli.kind)).toEqual(['codex'])
   const commands = new CoreCommands(f.source)
   await expect(commands.cli({ ...c.agent, machine: 'remote' }, c.grant, ['set', 'tasks.archiveAfter', '1 day', '--machine'])).rejects.toThrow('current')

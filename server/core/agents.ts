@@ -17,10 +17,23 @@ import { CorePilotRepositories } from './pilot-repositories.ts'
 import type { PilotPrepared, PilotLaunch } from '../../helper/core-pilot-launch.ts'
 import type { ResumeStart } from './failed-starts.ts'
 import { ownRules } from './own-commands.ts'
+import { OMP_ONLY } from './settings.ts'
 
 const EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'SessionEnd', 'PermissionRequest', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Notification', 'SubagentStart', 'SubagentStop']
 const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`
 const toml = (value: string) => JSON.stringify(value)
+
+/** The human's own approval mode. omp left to itself asks nothing, and every other CLI here asks: an unset one asks too. */
+const OMP_MODES = ['always-ask', 'always-ask-cached', 'write', 'yolo'] // strictest first
+export function ompApprovalMode(globalConfig: string, projectConfig = '{}') {
+  const set = (config: string) => { try { const mode = JSON.parse(config)['tools.approvalMode']?.value; return OMP_MODES.includes(mode) ? mode as string : undefined } catch { return OMP_MODES[0] } } // a setting it couldn't read may have been stricter
+  const own = set(globalConfig) ?? 'write', project = set(projectConfig)
+  // The flag outranks a repo's approval mode: that may ask more than its human does. Its other .omp settings still apply.
+  return project && OMP_MODES.indexOf(project) < OMP_MODES.indexOf(own) ? project : own
+}
+const ompConfig = async (scope: string, cwd: string, path: string) => {
+  try { return await new Response(Bun.spawn(['omp', 'config', 'list', '--scope', scope, '--json'], { cwd, stdin: 'ignore', stderr: 'ignore', timeout: 10_000, env: { ...process.env, PATH: path } }).stdout).text() } catch { return '' }
+}
 
 /** Agent processes belong to core; stopping Shepherdr only stops its observation timer. */
 export class CoreAgents {
@@ -58,6 +71,11 @@ export class CoreAgents {
   get(chat: string) { return this.store.get<CoreAgent>('agent', chat) }
   all() { return this.store.all<CoreAgent>('agent') }
   terminal(agent: CoreAgent) {
+    const terminal = this.running(agent)
+    // omp says blocked for all of a tool that needs approval, while it runs too, and asks through our card: the card says.
+    return agent.kind === 'omp' && terminal?.status?.kind === 'permission' ? { ...terminal, status: null } : terminal
+  }
+  private running(agent: CoreAgent) {
     if (agent.terminal) {
       const terminal = this.core.current.terminals.get(agent.terminal)
       if (terminal?.labels['shepherdr.installation'] === this.installation.id && terminal.labels['shepherdr.launch'] === agent.launch) return terminal
@@ -82,6 +100,7 @@ export class CoreAgents {
     this.launching.add(chat)
     let prepared: PilotPrepared | undefined, previous: CoreAgent | undefined, launchRecord: CoreAgent | undefined, submitted = false, cleanup: (() => Promise<void>) | undefined
     try {
+    if (kind === 'omp' && ((options.role ?? 'coordinator') !== 'task' || options.pilot || options.readOnly || await this.route(space.machine))) throw new Error(OMP_ONLY)
     previous = this.get(chat)
     if (previous && this.terminal(previous)?.state === 'live') throw new Error('This agent is already running')
     if (previous && !previous.terminal) throw new Error('The previous start is still unconfirmed. Reconnect core and check its state before retrying.')
@@ -150,6 +169,11 @@ export class CoreAgents {
       if (options.model) argv.push('--model', options.model)
       if (options.effort) argv.push('--effort', options.effort)
       if (options.speed) argv.push('--fast-mode', options.speed === 'fast' ? 'on' : 'off')
+    } else if (kind === 'omp') {
+      argv.push('--hook', join(root, 'helper/core-omp-hook.ts'), '--append-system-prompt', instructions, '--no-title', '--approval-mode', ompApprovalMode(await ompConfig('global', options.folder ?? space.folder, path), await ompConfig('project', options.folder ?? space.folder, path)))
+      if (record.session) argv.push('--resume', record.session)
+      if (options.model) argv.push('--model', options.model)
+      if (options.effort) argv.push('--thinking', options.effort)
     } else {
       if (headless) argv.push('exec', '--json', '--sandbox', 'read-only')
       else {
@@ -198,7 +222,7 @@ export class CoreAgents {
         'shepherdr.chat': chat, 'shepherdr.task': options.task ?? '', 'shepherdr.state': 'working', 'shepherdr.launch': launch,
       },
       env: { SHEPHERDR_CHAT: '', SHEPHERDR_SECRET_FILE: '', SHEPHERDR_URL: '',
-        ...shellEnv, SHEPHERDR_CORE_HOOK_FILE: hook },
+        ...shellEnv, SHEPHERDR_CORE_HOOK_FILE: hook, ...(kind === 'omp' ? { SHEPHERDR_OMP_HOOK: command } : {}) },
     }, 45_000)
     const current = this.get(chat)
     if (!current || current.launch !== launch || current.grant !== grant.id) throw new Error('Agent launch was replaced before core confirmed it')

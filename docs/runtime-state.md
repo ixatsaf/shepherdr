@@ -39,7 +39,7 @@ Speed can be picked in the restart sheet: Claude Code's `--fast-mode on|off` and
 of the same chat. Unlike model and effort it is not a Setting, so it isn't saved for
 future agents.
 
-Shepherdr 2.1 launches Claude Code and Codex. Pi is a later addition. Remote logs and
+Shepherdr 2.1 launches Claude Code and Codex, and Oh My Pi as a task agent. Pi is a later addition. Remote logs and
 hooks use the same core file/event interfaces as local agents, without an SSH log
 mirror or daemon-proxy fallback. Native process liveness and explicit OSC status are
 separate from task workflow: an idle or ended turn does not mean the task is Done.

@@ -1,5 +1,6 @@
 import { ClaudeReader } from '../common/readers/claude.ts'
 import { CodexReader } from '../common/readers/codex.ts'
+import { OmpReader } from '../common/readers/pi.ts'
 import type { LogEvent, Reader } from '../common/readers/types.ts'
 import type { Message } from '../../shared/types.ts'
 import type { CoreAgents } from './agents.ts'
@@ -144,7 +145,7 @@ export class CoreLogs {
   private async transcript(agent: CoreAgent) {
     let cursor = this.logs.get(agent.chat)
     if (!cursor || cursor.path !== agent.transcript) {
-      cursor = { path: agent.transcript!, file: new CoreNativeFile(agent.transcript!), reader: agent.transcriptFormat === 'codex-exec' ? new CoreReviewReader() : agent.kind === 'claude' ? new ClaudeReader() : new CodexReader() }
+      cursor = { path: agent.transcript!, file: new CoreNativeFile(agent.transcript!), reader: agent.transcriptFormat === 'codex-exec' ? new CoreReviewReader() : agent.kind === 'claude' ? new ClaudeReader() : agent.kind === 'omp' ? new OmpReader() : new CodexReader() }
       this.logs.set(agent.chat, cursor)
     }
     cursor.reset = () => {

@@ -53,11 +53,11 @@ export class CoreCommands {
     }
     if (Object.keys(parsed.opts).some(key => !['space', 'section'].includes(key)) || [...parsed.flags].some(key => key !== 'machine')) throw new Refusal('Use --space NAME or --machine for settings')
     if (command === 'models') {
-      if (words.length > 1 || one(parsed, 'section')) throw new Refusal('Use models [claude|codex] [--space NAME]')
+      if (words.length > 1 || one(parsed, 'section')) throw new Refusal('Use models [claude|codex|omp] [--space NAME]')
       const kind = words[0] && kindOf(words[0])
-      if (words[0] && !kind) throw new Refusal('Choose Claude Code or Codex')
+      if (words[0] && !kind) throw new Refusal('Choose Claude Code, Codex or Oh My Pi')
       const level = this.level(agent, parsed, agent.space)
-      return result(JSON.stringify(this.source.settings.clis(level).filter(cli => !kind || cli.kind === kind), null, 2))
+      return result(JSON.stringify(this.source.settings.clis(level, true).filter(cli => !kind || cli.kind === kind), null, 2))
     }
     if (command === 'show') {
       if (words.length) throw new Refusal('Use show [--space NAME | --machine] [--section NAME]')

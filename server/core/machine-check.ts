@@ -1,7 +1,7 @@
 // What a machine can really run: its CLIs, installed and signed in, and Autopilot's sandbox. Asked of the CLIs themselves,
 // so an API key, a keychain or a login file all count. Only yes or no comes back: their status also names the account.
 export type CliState = 'ready' | 'signed-out' | 'missing'
-export interface MachineCheck { at: number; platform?: string; sandbox?: 'ok' | 'missing' | 'blocked'; cli: { claude?: CliState; codex?: CliState } }
+export interface MachineCheck { at: number; platform?: string; sandbox?: 'ok' | 'missing' | 'blocked'; cli: { claude?: CliState; codex?: CliState; omp?: CliState } }
 
 export const MACHINE_CHECK = `
 limit=; if command -v timeout >/dev/null 2>&1; then limit='timeout 10'; fi

@@ -57,6 +57,8 @@ export const TABLE: Record<string, CliModels> = {
   },
   // pi reaches many providers' models: only pi itself can list them
   pi: { models: [], efforts: PI_LEVELS },
+  // the same for Oh My Pi: `omp models` lists them
+  omp: { models: [], efforts: PI_LEVELS },
 }
 
 /** Claude Code's families as its /model menu offers them, newest of each; its aliases (opus, haiku) name these too */
@@ -127,6 +129,20 @@ export function parseCodex(json: string): CliModels | undefined {
   if (!models.length) return undefined
   const efforts = [...new Set(models.flatMap((m) => m.efforts))].sort((a, b) => RANK[a] - RANK[b])
   return { models, others: ok.filter((m) => m.visibility === 'hide').map(model), efforts }
+}
+
+/** `omp models --json`: chat models by their provider/id selector, with the thinking levels each takes */
+export function parseOmp(json: string): CliModels | undefined {
+  type Raw = { kind?: string; selector?: string; name?: string; thinking?: string[] | null }
+  let raw: Raw[]
+  try {
+    raw = JSON.parse(json).models
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(raw)) return undefined
+  const models = raw.filter((m) => m.kind === 'chat' && m.selector).map((m): Model => ({ id: m.selector!, label: m.name || m.selector!, efforts: (m.thinking ?? []).filter((l) => l in RANK) }))
+  return models.length ? { models, efforts: TABLE.omp.efforts } : undefined
 }
 
 /** `pi --list-models`: a table of provider, model, …, thinking (yes or no); the levels from its --help */
