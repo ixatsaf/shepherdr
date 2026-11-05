@@ -25,10 +25,10 @@ const toml = (value: string) => JSON.stringify(value)
 
 /** The human's own approval mode. omp left to itself asks nothing, and every other CLI here asks: an unset one asks too. */
 const OMP_MODES = ['always-ask', 'always-ask-cached', 'write', 'yolo'] // strictest first
-export function ompApprovalMode(globalConfig: string, projectConfig = '') {
-  const set = (config: string) => { try { const mode = JSON.parse(config)['tools.approvalMode']?.value; return OMP_MODES.includes(mode) ? mode as string : undefined } catch { return undefined } }
+export function ompApprovalMode(globalConfig: string, projectConfig = '{}') {
+  const set = (config: string) => { try { const mode = JSON.parse(config)['tools.approvalMode']?.value; return OMP_MODES.includes(mode) ? mode as string : undefined } catch { return OMP_MODES[0] } } // a setting it couldn't read may have been stricter
   const own = set(globalConfig) ?? 'write', project = set(projectConfig)
-  // The flag outranks a repo's own setting: that may ask more than its human does, never less.
+  // The flag outranks a repo's approval mode: that may ask more than its human does. Its other .omp settings still apply.
   return project && OMP_MODES.indexOf(project) < OMP_MODES.indexOf(own) ? project : own
 }
 const ompConfig = async (scope: string, cwd: string, path: string) => {

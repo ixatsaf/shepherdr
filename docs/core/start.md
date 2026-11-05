@@ -73,7 +73,12 @@ another checkout ref. Keep the installed source/dependencies available while it 
 A task can run on Oh My Pi: `task add --agent omp`, or `task.agent` set to Oh My Pi in Settings. `shepherdr models omp`
 lists its models. Its row, status, chat, permission cards, review and merge work as for any task. `tools.approvalMode`
 in `~/.omp/agent/config.yml` decides what asks; a task starts on `write`, which asks before every shell command, where it
-is unset. `yolo` there means no cards at all. A repo's `.omp` can make a task ask more, never less.
+is unset. `yolo` there means no cards at all. If that setting can't be read, a task starts on `always-ask`.
+
+**Only run omp tasks on repos you trust.** A repo's `.omp` runs with the task and can skip the cards: omp loads its
+extensions at launch with no card, and its `tools.approval` setting applies in every approval mode. Under `write` the
+agent can also change those files itself without a card, and they apply from its next start. A repo's own approval mode
+can only make a task ask more.
 
 Its task runs through `helper/core-omp-hook.ts`, an omp extension that sends its events to the same hook as other CLIs
 and answers its prompts through `ui.approve`, the slot omp keeps for a host. An omp release that stops reading that

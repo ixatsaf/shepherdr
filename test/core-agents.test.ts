@@ -219,7 +219,11 @@ test('an Oh My Pi task keeps the approval mode its human chose, and asks where n
   const config = (value: unknown) => JSON.stringify({ 'tools.approvalMode': { value, type: 'enum' } })
   expect(ompApprovalMode(config('always-ask'))).toBe('always-ask')
   expect(ompApprovalMode(config('yolo'))).toBe('yolo')
-  for (const unset of ['{}', '', 'not json', config('odd')]) expect(ompApprovalMode(unset)).toBe('write')
+  for (const unset of ['{}', config('odd')]) expect(ompApprovalMode(unset)).toBe('write')
+  for (const failed of ['', 'not json']) {
+    expect(ompApprovalMode(failed)).toBe('always-ask')
+    expect(ompApprovalMode(config('write'), failed)).toBe('always-ask')
+  }
   expect(ompApprovalMode(config('write'), config('always-ask'))).toBe('always-ask')
   expect(ompApprovalMode('{}', config('yolo'))).toBe('write')
   expect(ompApprovalMode(config('always-ask'), config('yolo'))).toBe('always-ask')
